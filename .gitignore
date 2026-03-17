@@ -67,3 +67,6 @@ htmlcov/
 *.temp
 tmp/
 temp/
+
+# Vibe Coding
+.claude/
