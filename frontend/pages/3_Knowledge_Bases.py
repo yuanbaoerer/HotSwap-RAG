@@ -2,9 +2,8 @@
 
 import streamlit as st
 import requests
-from datetime import datetime
 
-from config import API_BASE_URL
+from frontend.config import API_BASE_URL
 
 st.set_page_config(page_title="知识库管理 - HotSwap RAG", page_icon="📚")
 
