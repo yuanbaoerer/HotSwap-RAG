@@ -4,6 +4,7 @@ import streamlit as st
 import requests
 import pandas as pd
 from pathlib import Path
+import json
 
 # Configuration
 API_BASE_URL = "http://127.0.0.1:8000"
@@ -23,6 +24,17 @@ def get_documents():
     except Exception as e:
         st.error(f"获取文档列表失败: {e}")
     return {"documents": [], "total": 0}
+
+
+def get_knowledge_bases():
+    """Fetch knowledge bases from API."""
+    try:
+        response = requests.get(f"{API_BASE_URL}/api/knowledge-bases/", timeout=10)
+        if response.status_code == 200:
+            return response.json().get("knowledge_bases", [])
+    except Exception as e:
+        st.error(f"获取知识库列表失败: {e}")
+    return []
 
 
 def upload_document(file, kb_id=None):
@@ -60,6 +72,18 @@ def delete_document(doc_id):
     return False
 
 
+def delete_all_documents(documents):
+    """Delete all documents."""
+    deleted = 0
+    failed = 0
+    for doc in documents:
+        if delete_document(doc["id"]):
+            deleted += 1
+        else:
+            failed += 1
+    return deleted, failed
+
+
 # Upload section
 st.subheader("上传文档")
 
@@ -69,8 +93,13 @@ uploaded_files = st.file_uploader(
     accept_multiple_files=True,
 )
 
-kb_options = ["默认知识库"]
-selected_kb = st.selectbox("选择知识库", kb_options)
+# Get knowledge bases for selection
+kbs = get_knowledge_bases()
+kb_options = ["默认知识库"] + [f"{kb['name']} ({kb['id'][:8]}...)" for kb in kbs]
+kb_ids = [None] + [kb['id'] for kb in kbs]
+
+selected_kb_index = st.selectbox("选择知识库", range(len(kb_options)), format_func=lambda i: kb_options[i])
+selected_kb_id = kb_ids[selected_kb_index]
 
 col1, col2 = st.columns(2)
 
@@ -86,7 +115,7 @@ with col2:
         if uploaded_files:
             progress_bar = st.progress(0)
             for i, file in enumerate(uploaded_files):
-                result = upload_document(file)
+                result = upload_document(file, selected_kb_id)
                 if result:
                     st.success(f"已上传: {file.name} (ID: {result['id'][:8]}...)")
                 progress_bar.progress((i + 1) / len(uploaded_files))
@@ -149,18 +178,89 @@ if documents:
 else:
     st.info("暂无文档。上传文档后将在此显示。")
 
-# Actions
+# Other actions
 st.subheader("其他操作")
+
 col1, col2, col3 = st.columns(3)
 
 with col1:
+    # Export index
     if st.button("📥 导出索引"):
-        st.info("功能开发中...")
+        if documents:
+            # Create export data
+            export_data = {
+                "export_time": pd.Timestamp.now().isoformat(),
+                "total_documents": len(documents),
+                "documents": documents,
+            }
+
+            # Convert to JSON
+            json_data = json.dumps(export_data, ensure_ascii=False, indent=2)
+
+            # Download button
+            st.download_button(
+                label="下载索引文件",
+                data=json_data,
+                file_name=f"document_index_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.json",
+                mime="application/json",
+            )
+        else:
+            st.warning("没有文档可以导出")
 
 with col2:
+    # Reprocess all documents
     if st.button("🔄 重新处理所有文档"):
-        st.info("功能开发中...")
+        if documents:
+            # Filter documents that can be reprocessed
+            reprocessable = [d for d in documents if d["status"] in ["completed", "failed"]]
+            if reprocessable:
+                st.info(f"将重新处理 {len(reprocessable)} 个文档。")
+                st.warning("注意：此功能需要重新上传文档才能触发处理。")
+            else:
+                st.info("没有需要重新处理的文档。")
+        else:
+            st.warning("没有文档可以处理")
 
 with col3:
+    # Clear all documents
     if st.button("🗑️ 清空所有文档"):
-        st.warning("此功能需要确认，暂不可用")
+        st.session_state.confirm_clear = True
+
+    # Confirmation dialog
+    if st.session_state.get("confirm_clear"):
+        st.warning(f"确定要删除所有 {len(documents)} 个文档吗？此操作不可撤销！")
+        col_confirm, col_cancel = st.columns(2)
+
+        with col_confirm:
+            if st.button("✅ 确认清空", type="primary"):
+                deleted, failed = delete_all_documents(documents)
+                st.session_state.confirm_clear = False
+                if failed == 0:
+                    st.success(f"已删除所有 {deleted} 个文档")
+                else:
+                    st.warning(f"删除 {deleted} 个，失败 {failed} 个")
+                st.rerun()
+
+        with col_cancel:
+            if st.button("❌ 取消"):
+                st.session_state.confirm_clear = False
+                st.rerun()
+
+# Statistics
+st.subheader("统计信息")
+col1, col2, col3, col4 = st.columns(4)
+
+with col1:
+    st.metric("文档总数", len(documents))
+
+with col2:
+    completed = sum(1 for d in documents if d["status"] == "completed")
+    st.metric("处理完成", completed)
+
+with col3:
+    processing = sum(1 for d in documents if d["status"] == "processing")
+    st.metric("处理中", processing)
+
+with col4:
+    failed = sum(1 for d in documents if d["status"] == "failed")
+    st.metric("处理失败", failed)
