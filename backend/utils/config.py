@@ -38,6 +38,7 @@ class Settings(BaseSettings):
     default_store: str = "chromadb"
     default_llm: str = "openai"
     default_embedding_model: str = "text-embedding-3-small"
+    embedding_model: str = "text-embedding-3-small"  # Alias for compatibility
 
     # API Configuration
     api_host: str = "0.0.0.0"
