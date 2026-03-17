@@ -1,12 +1,53 @@
 """Settings page for managing system configuration."""
 
 import streamlit as st
+import requests
 import os
+
+# Configuration
+API_BASE_URL = "http://127.0.0.1:8000"
 
 st.set_page_config(page_title="系统设置 - HotSwap RAG", page_icon="⚙️")
 
 st.title("⚙️ 系统设置")
 st.markdown("配置系统的解析器、向量数据库和 LLM 提供商。")
+
+
+def get_config(endpoint):
+    """Fetch config from API."""
+    try:
+        response = requests.get(f"{API_BASE_URL}/api/config/{endpoint}", timeout=10)
+        if response.status_code == 200:
+            return response.json()
+    except Exception as e:
+        st.error(f"获取配置失败: {e}")
+    return []
+
+
+def get_active_config():
+    """Fetch active config from API."""
+    try:
+        response = requests.get(f"{API_BASE_URL}/api/config/active", timeout=10)
+        if response.status_code == 200:
+            return response.json()
+    except Exception as e:
+        st.error(f"获取配置失败: {e}")
+    return None
+
+
+def update_active_config(config):
+    """Update active config via API."""
+    try:
+        response = requests.put(
+            f"{API_BASE_URL}/api/config/active",
+            json=config,
+            timeout=10,
+        )
+        return response.status_code == 200
+    except Exception as e:
+        st.error(f"更新配置失败: {e}")
+    return False
+
 
 # API Keys configuration
 st.subheader("🔑 API 密钥配置")
@@ -52,54 +93,81 @@ OLLAMA_BASE_URL=http://localhost:11434
 # Active configuration
 st.subheader("🔄 当前活跃配置")
 
+# Fetch available options
+parsers = get_config("parsers")
+stores = get_config("stores")
+llms = get_config("llms")
+active_config = get_active_config()
+
 col1, col2, col3 = st.columns(3)
 
 with col1:
     st.markdown("### 文档解析器")
+    parser_types = [p["type"] for p in parsers]
+    current_parser = active_config.get("parser_type", "pdf") if active_config else "pdf"
+    parser_index = parser_types.index(current_parser) if current_parser in parser_types else 0
+
     parser = st.selectbox(
         "选择解析器",
-        ["pdf", "docx", "ocr"],
-        index=0,
+        parser_types,
+        index=parser_index,
         key="active_parser",
     )
     st.markdown("""
-**PDF Parser**: 使用 PyPDF2 解析 PDF 文件
-**DOCX Parser**: 使用 python-docx 解析 Word 文档
-**OCR Parser**: 使用 Tesseract 解析扫描件和图片
+**pdf**: 使用 PyPDF2 解析 PDF 文件
+**docx**: 使用 python-docx 解析 Word 文档
+**ocr**: 使用 Tesseract 解析扫描件和图片
     """)
 
 with col2:
     st.markdown("### 向量数据库")
+    store_types = [s["type"] for s in stores]
+    current_store = active_config.get("store_type", "chromadb") if active_config else "chromadb"
+    store_index = store_types.index(current_store) if current_store in store_types else 0
+
     store = st.selectbox(
         "选择向量库",
-        ["chromadb", "pinecone", "milvus", "faiss"],
-        index=0,
+        store_types,
+        index=store_index,
         key="active_store",
     )
     st.markdown("""
-**ChromaDB**: 本地开发推荐，零配置
-**Pinecone**: 云端托管，生产级
-**Milvus**: 自托管，可扩展
-**FAISS**: Facebook 开源，轻量级
+**chromadb**: 本地开发推荐，零配置
+**pinecone**: 云端托管，生产级
+**milvus**: 自托管，可扩展
+**faiss**: Facebook 开源，轻量级
     """)
 
 with col3:
     st.markdown("### LLM 提供商")
+    llm_types = [l["type"] for l in llms]
+    current_llm = active_config.get("llm_type", "openai") if active_config else "openai"
+    llm_index = llm_types.index(current_llm) if current_llm in llm_types else 0
+
     llm = st.selectbox(
         "选择 LLM",
-        ["openai", "anthropic", "ollama", "openai_compatible"],
-        index=0,
+        llm_types,
+        index=llm_index,
         key="active_llm",
     )
     st.markdown("""
-**OpenAI**: GPT-4, GPT-3.5
-**Anthropic**: Claude 系列
-**Ollama**: 本地模型
-**OpenAI 兼容**: 自定义端点
+**openai**: GPT-4, GPT-3.5
+**anthropic**: Claude 系列
+**ollama**: 本地模型
+**openai_compatible**: 自定义端点
     """)
 
 if st.button("💾 保存配置", type="primary"):
-    st.success("配置已保存！")
+    new_config = {
+        "parser_type": parser,
+        "store_type": store,
+        "llm_type": llm,
+        "llm_model": active_config.get("llm_model", "gpt-4o-mini") if active_config else "gpt-4o-mini",
+    }
+    if update_active_config(new_config):
+        st.success("配置已保存！")
+    else:
+        st.error("保存配置失败")
 
 # Model selection
 st.subheader("🤖 模型配置")
@@ -107,9 +175,10 @@ st.subheader("🤖 模型配置")
 col1, col2 = st.columns(2)
 
 with col1:
+    current_model = active_config.get("llm_model", "gpt-4o-mini") if active_config else "gpt-4o-mini"
     llm_model = st.text_input(
         "LLM 模型名称",
-        value="gpt-4o-mini",
+        value=current_model,
         help="LLM 模型名称，如 gpt-4o-mini, claude-3-5-sonnet-20241022",
     )
 
@@ -174,3 +243,15 @@ st.markdown(f"""
 - **文档目录**: `./data/documents/`
 - **向量存储目录**: `./data/vector_stores/`
 """)
+
+# API Status
+st.subheader("🔌 API 状态")
+
+try:
+    health = requests.get(f"{API_BASE_URL}/health", timeout=5)
+    if health.status_code == 200:
+        st.success(f"后端 API 运行中 - 版本: {health.json().get('version', 'unknown')}")
+    else:
+        st.error("后端 API 异常")
+except Exception as e:
+    st.error(f"无法连接后端 API: {e}")
