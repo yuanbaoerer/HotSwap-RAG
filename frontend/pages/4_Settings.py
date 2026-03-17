@@ -4,8 +4,7 @@ import streamlit as st
 import requests
 import os
 
-# Configuration
-API_BASE_URL = "http://127.0.0.1:8000"
+from frontend.config import API_BASE_URL
 
 st.set_page_config(page_title="系统设置 - HotSwap RAG", page_icon="⚙️")
 
@@ -49,46 +48,193 @@ def update_active_config(config):
     return False
 
 
+def get_api_keys():
+    """Fetch API keys from API."""
+    try:
+        response = requests.get(f"{API_BASE_URL}/api/config/api-keys", timeout=10)
+        if response.status_code == 200:
+            return response.json()
+    except Exception as e:
+        st.error(f"获取 API 密钥失败: {e}")
+    return {}
+
+
+def update_api_keys(api_keys):
+    """Update API keys via API."""
+    try:
+        response = requests.put(
+            f"{API_BASE_URL}/api/config/api-keys",
+            json=api_keys,
+            timeout=10,
+        )
+        if response.status_code == 200:
+            return True
+        else:
+            st.error(f"更新失败: {response.text}")
+    except Exception as e:
+        st.error(f"更新失败: {e}")
+    return False
+
+
+def delete_api_key(key_name):
+    """Delete a specific API key."""
+    try:
+        response = requests.delete(
+            f"{API_BASE_URL}/api/config/api-keys/{key_name}",
+            timeout=10,
+        )
+        return response.status_code == 200
+    except Exception as e:
+        st.error(f"删除失败: {e}")
+    return False
+
+
 # API Keys configuration
 st.subheader("🔑 API 密钥配置")
 
-with st.expander("配置 API 密钥", expanded=True):
+# Get current API keys status
+api_keys = get_api_keys()
+
+with st.expander("管理 API 密钥", expanded=True):
     st.markdown("""
-API 密钥从环境变量或 `.env` 文件读取。
-请在项目根目录创建 `.env` 文件并配置：
+API 密钥存储在数据库中，优先级高于环境变量。
+留空则使用环境变量或删除已存储的密钥。
 """)
 
-    st.code("""
-# OpenAI
-OPENAI_API_KEY=sk-xxx
+    # Create form for API keys
+    with st.form("api_keys_form"):
+        st.markdown("#### LLM 提供商密钥")
 
-# Anthropic
-ANTHROPIC_API_KEY=sk-ant-xxx
+        col1, col2 = st.columns(2)
 
-# Pinecone
-PINECONE_API_KEY=xxx
-PINECONE_ENVIRONMENT=xxx
+        with col1:
+            openai_key = st.text_input(
+                "OpenAI API Key",
+                type="password",
+                placeholder="sk-...",
+                help="用于 OpenAI GPT 模型",
+            )
 
-# Ollama
-OLLAMA_BASE_URL=http://localhost:11434
-    """, language="bash")
+            anthropic_key = st.text_input(
+                "Anthropic API Key",
+                type="password",
+                placeholder="sk-ant-...",
+                help="用于 Claude 模型",
+            )
+
+        with col2:
+            ollama_url = st.text_input(
+                "Ollama Base URL",
+                value=api_keys.get("ollama_base_url", {}).get("masked_value", "http://localhost:11434"),
+                help="Ollama 服务地址",
+            )
+
+        st.markdown("#### 向量数据库密钥")
+
+        col1, col2 = st.columns(2)
+
+        with col1:
+            pinecone_key = st.text_input(
+                "Pinecone API Key",
+                type="password",
+                placeholder="Enter Pinecone API key",
+                help="用于 Pinecone 向量数据库",
+            )
+
+        with col2:
+            pinecone_env = st.text_input(
+                "Pinecone Environment",
+                placeholder="us-east-1",
+                help="Pinecone 环境名称",
+            )
+
+        st.markdown("#### Milvus 配置")
+
+        col1, col2 = st.columns(2)
+
+        with col1:
+            milvus_host = st.text_input(
+                "Milvus Host",
+                value="localhost",
+                help="Milvus 服务器地址",
+            )
+
+        with col2:
+            milvus_port = st.number_input(
+                "Milvus Port",
+                value=19530,
+                help="Milvus 服务器端口",
+            )
+
+        col1, col2 = st.columns(2)
+
+        with col1:
+            submitted = st.form_submit_button("💾 保存密钥", type="primary")
+
+        with col2:
+            clear = st.form_submit_button("🗑️ 清空所有密钥")
+
+    if submitted:
+        # Build API keys dict
+        keys_to_save = {}
+
+        if openai_key:
+            keys_to_save["openai_api_key"] = openai_key
+        if anthropic_key:
+            keys_to_save["anthropic_api_key"] = anthropic_key
+        if ollama_url:
+            keys_to_save["ollama_base_url"] = ollama_url
+        if pinecone_key:
+            keys_to_save["pinecone_api_key"] = pinecone_key
+        if pinecone_env:
+            keys_to_save["pinecone_environment"] = pinecone_env
+        if milvus_host:
+            keys_to_save["milvus_host"] = milvus_host
+        if milvus_port:
+            keys_to_save["milvus_port"] = milvus_port
+
+        if update_api_keys(keys_to_save):
+            st.success("API 密钥已保存！")
+            st.rerun()
+
+    if clear:
+        # Delete all keys
+        for key_name in ["openai_api_key", "anthropic_api_key", "pinecone_api_key", "pinecone_environment"]:
+            delete_api_key(key_name)
+        st.success("已清空所有存储的密钥")
+        st.rerun()
 
     # Show current status
+    st.markdown("---")
+    st.markdown("#### 当前密钥状态")
+
     col1, col2 = st.columns(2)
 
     with col1:
-        openai_status = "✅ 已配置" if os.environ.get("OPENAI_API_KEY") else "❌ 未配置"
-        st.markdown(f"**OpenAI**: {openai_status}")
+        openai_info = api_keys.get("openai_api_key", {})
+        if openai_info.get("configured"):
+            st.success(f"✅ OpenAI: {openai_info.get('masked_value', '')} ({openai_info.get('source', '')})")
+        else:
+            st.warning("❌ OpenAI: 未配置")
 
-        anthropic_status = "✅ 已配置" if os.environ.get("ANTHROPIC_API_KEY") else "❌ 未配置"
-        st.markdown(f"**Anthropic**: {anthropic_status}")
+        anthropic_info = api_keys.get("anthropic_api_key", {})
+        if anthropic_info.get("configured"):
+            st.success(f"✅ Anthropic: {anthropic_info.get('masked_value', '')} ({anthropic_info.get('source', '')})")
+        else:
+            st.warning("❌ Anthropic: 未配置")
 
     with col2:
-        pinecone_status = "✅ 已配置" if os.environ.get("PINECONE_API_KEY") else "❌ 未配置"
-        st.markdown(f"**Pinecone**: {pinecone_status}")
+        pinecone_info = api_keys.get("pinecone_api_key", {})
+        if pinecone_info.get("configured"):
+            st.success(f"✅ Pinecone: {pinecone_info.get('masked_value', '')} ({pinecone_info.get('source', '')})")
+        else:
+            st.warning("❌ Pinecone: 未配置")
 
-        ollama_url = os.environ.get("OLLAMA_BASE_URL", "未设置")
-        st.markdown(f"**Ollama URL**: `{ollama_url}`")
+        ollama_info = api_keys.get("ollama_base_url", {})
+        if ollama_info.get("configured"):
+            st.success(f"✅ Ollama: {ollama_info.get('masked_value', '')} ({ollama_info.get('source', '')})")
+        else:
+            st.warning("❌ Ollama: 未配置")
 
 # Active configuration
 st.subheader("🔄 当前活跃配置")

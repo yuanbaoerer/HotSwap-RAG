@@ -96,6 +96,64 @@ class TestConfigEndpoints:
         assert data["status"] == "reset"
 
 
+class TestAPIKeysEndpoints:
+    """Tests for API keys management endpoints."""
+
+    def test_get_api_keys(self, client):
+        """Test getting API keys status."""
+        response = client.get("/api/config/api-keys")
+        assert response.status_code == 200
+        data = response.json()
+        # Should have all key fields
+        assert "openai_api_key" in data
+        assert "anthropic_api_key" in data
+        assert "pinecone_api_key" in data
+        assert "ollama_base_url" in data
+
+    def test_update_api_keys(self, client):
+        """Test updating API keys."""
+        response = client.put(
+            "/api/config/api-keys",
+            json={
+                "openai_api_key": "sk-test-key-12345678",
+                "ollama_base_url": "http://localhost:11434",
+            },
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "success"
+
+        # Verify the update persisted
+        response = client.get("/api/config/api-keys")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["openai_api_key"]["configured"] is True
+        # Masked value should have "..." in the middle
+        assert "..." in data["openai_api_key"]["masked_value"]
+
+    def test_delete_api_key(self, client):
+        """Test deleting a specific API key."""
+        # First set a key
+        client.put(
+            "/api/config/api-keys",
+            json={"openai_api_key": "sk-to-delete"},
+        )
+
+        # Then delete it
+        response = client.delete("/api/config/api-keys/openai_api_key")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "deleted"
+
+    def test_get_specific_api_key(self, client):
+        """Test getting a specific API key."""
+        response = client.get("/api/config/api-keys/openai_api_key")
+        assert response.status_code == 200
+        data = response.json()
+        assert "key_name" in data
+        assert "configured" in data
+
+
 class TestDocumentEndpoints:
     """Tests for document endpoints."""
 
