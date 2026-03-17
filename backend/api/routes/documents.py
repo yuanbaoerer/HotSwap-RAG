@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from backend.api.dependencies import get_db
 from backend.db.models import Document
 from backend.utils.config import settings
+from backend.factories import create_parser, create_store
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -40,13 +41,42 @@ class DocumentListResponse(BaseModel):
     total: int
 
 
-def process_document(document_id: str, file_path: Path, db_url: str):
+def get_parser_type(file_type: str) -> str:
+    """Get parser type based on file type.
+
+    Args:
+        file_type: File extension without dot.
+
+    Returns:
+        Parser type string.
+    """
+    parser_map = {
+        "pdf": "pdf",
+        "docx": "docx",
+        "doc": "docx",
+        "png": "ocr",
+        "jpg": "ocr",
+        "jpeg": "ocr",
+        "tiff": "ocr",
+        "bmp": "ocr",
+        "gif": "ocr",
+    }
+    return parser_map.get(file_type.lower(), "pdf")
+
+
+def process_document(document_id: str, file_path: Path, db_url: str, kb_id: Optional[str] = None):
     """Background task to process a document.
+
+    This function:
+    1. Parses the document using appropriate parser
+    2. Chunks the text
+    3. Adds chunks to vector store
 
     Args:
         document_id: Document ID in database.
         file_path: Path to the uploaded file.
         db_url: Database URL for creating new session.
+        kb_id: Optional knowledge base ID for collection naming.
     """
     from sqlalchemy import create_engine
     from sqlalchemy.orm import sessionmaker
@@ -64,13 +94,69 @@ def process_document(document_id: str, file_path: Path, db_url: str):
             doc.status = "processing"
             db.commit()
 
-            # TODO: Parse document and add to vector store
-            # For now, just mark as completed
+            # Determine parser type based on file extension
+            file_type = doc.file_type or "pdf"
+            parser_type = get_parser_type(file_type)
+
+            logger.info(f"Parsing document {document_id} with {parser_type} parser")
+
+            # Create parser and parse document
+            try:
+                parser = create_parser(parser_type)
+                chunks = parser.parse(file_path)
+                logger.info(f"Parsed {len(chunks)} chunks from {file_path}")
+            except Exception as e:
+                logger.error(f"Failed to parse document: {e}")
+                doc.status = "failed"
+                doc.error_message = f"Parse error: {str(e)}"
+                db.commit()
+                return
+
+            if not chunks:
+                logger.warning(f"No chunks extracted from {file_path}")
+                doc.status = "completed"
+                doc.chunk_count = 0
+                db.commit()
+                return
+
+            # Create vector store and add documents
+            collection_name = kb_id or "default"
+
+            try:
+                store = create_store(
+                    store_type="chromadb",
+                    collection_name=collection_name,
+                    persist_directory=str(settings.vector_stores_dir),
+                )
+
+                # Prepare metadata for each chunk
+                metadatas = [
+                    {
+                        "document_id": document_id,
+                        "filename": doc.filename,
+                        "chunk_index": i,
+                        "source": str(file_path),
+                    }
+                    for i in range(len(chunks))
+                ]
+
+                # Add to vector store
+                store.add_documents(chunks, metadatas=metadatas)
+                logger.info(f"Added {len(chunks)} chunks to vector store")
+
+            except Exception as e:
+                logger.error(f"Failed to add to vector store: {e}")
+                doc.status = "failed"
+                doc.error_message = f"Vector store error: {str(e)}"
+                db.commit()
+                return
+
+            # Update document status
             doc.status = "completed"
-            doc.chunk_count = 0
+            doc.chunk_count = len(chunks)
             db.commit()
 
-            logger.info(f"Document processed: {document_id}")
+            logger.info(f"Document processed successfully: {document_id}")
 
         except Exception as e:
             logger.error(f"Failed to process document {document_id}: {e}")
@@ -177,6 +263,7 @@ async def upload_document(
         doc_id,
         file_path,
         settings.database_url,
+        kb_id,
     )
 
     return DocumentResponse(
