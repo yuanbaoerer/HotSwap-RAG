@@ -25,12 +25,22 @@ cd HotSwap-RAG
 
 ### 2. 安装依赖
 
+**使用 venv:**
+
 ```bash
 python -m venv venv
 source venv/bin/activate  # Linux/Mac
 # or
 .\venv\Scripts\activate  # Windows
 
+pip install -r requirements.txt
+```
+
+**使用 Conda:**
+
+```bash
+conda create -n hotswap-rag python=3.11
+conda activate hotswap-rag
 pip install -r requirements.txt
 ```
 
