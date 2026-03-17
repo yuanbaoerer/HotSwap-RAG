@@ -6,7 +6,7 @@ import pandas as pd
 from pathlib import Path
 import json
 
-from frontend.config import API_BASE_URL
+from config import API_BASE_URL
 
 st.set_page_config(page_title="文档管理 - HotSwap RAG", page_icon="📄")
 

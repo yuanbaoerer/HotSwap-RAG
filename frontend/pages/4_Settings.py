@@ -4,7 +4,7 @@ import streamlit as st
 import requests
 import os
 
-from frontend.config import API_BASE_URL
+from config import API_BASE_URL
 
 st.set_page_config(page_title="系统设置 - HotSwap RAG", page_icon="⚙️")
 
